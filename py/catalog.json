@@ -1,0 +1,17 @@
+{
+  "_comment": "Категория -> каталожный ассет set.a.light. front_yaw0_compass: куда смотрит передняя сторона ассета при yaw=0 (180 = на юг, т.е. -Z) — проверено на диване/ТВ/стуле по правкам пользователя 2026-10-08. base: (x,z) габарит базового ассета при scale=1, если известен. Остальные категории -> блок type 13.",
+  "assets": {
+    "sofa":  {"asset": "af3dc5cf51d94237992cc372fceb43d9", "key": "SOFA_2_MIT_PFLANZE", "front_yaw0_compass": 180, "default_scale": [1, 1, 1], "base": null, "note": "Г-образный, выбран пользователем"},
+    "chair": {"asset": "bb237da9738d40f6b23dfc58b9a34794", "key": "STUHL_01", "front_yaw0_compass": 180, "default_scale": [0.77, 1, 0.96], "base": null},
+    "table": {"asset": "6e1c1e3eb8204d3d961c3d25b603a550", "key": "TABLE", "front_yaw0_compass": 180, "default_scale": [1, 1, 1], "base": [0.87, 1.30], "note": "длинная ось = local Z; base выведен из правок пользователя"},
+    "tv":    {"asset": "232b9bd90465477abd1984f18d708f90", "key": "TV_FLATSCREEN", "front_yaw0_compass": 180, "default_scale": [1, 1, 1], "base": null}
+  },
+  "block_default_color": [0.8, 0.8, 0.8],
+  "calibration": {
+    "portal_wall_offset": 0.12,
+    "floor_gain": [1.35, 1.43, 1.57],
+    "floor_gain_note": "одна проба: замер по кадрам ~(0.675,0.67,0.635) -> пользователь выбрал (0.91,0.96,1.0)",
+    "wall_ids": {"east": 5, "west": 4},
+    "wall_ids_unverified": ["north", "south"]
+  }
+}

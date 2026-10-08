@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="ru"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="theme-color" content="#111827">
+<link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icon.svg">
+<title>Room → .set</title>
+<style>
+:root{color-scheme:dark}body{margin:0;font:16px -apple-system,system-ui,sans-serif;background:#111827;color:#e5e7eb;padding:14px 14px 80px;max-width:640px;margin:auto}
+h1{font-size:20px;margin:6px 0 14px}h2{font-size:16px;margin:0 0 8px;color:#93c5fd}
+section{background:#1f2937;border-radius:12px;padding:12px;margin-bottom:12px}
+label{display:block;font-size:13px;color:#9ca3af;margin:8px 0 3px}
+input,textarea,button{font:inherit;width:100%;box-sizing:border-box;border-radius:8px;border:1px solid #374151;background:#111827;color:#e5e7eb;padding:10px}
+button{background:#2563eb;border:0;font-weight:600;margin-top:10px}button.sec{background:#374151}button:disabled{opacity:.5}
+.row{display:flex;gap:8px}.row>*{flex:1}.muted{color:#9ca3af;font-size:13px}.ok{color:#34d399}.warn{color:#fbbf24}.err{color:#f87171}
+.scan{border-top:1px solid #374151;padding:8px 0}canvas{width:100%;background:#0b1220;border-radius:8px;margin-top:8px}
+#log{white-space:pre-wrap;font:12px ui-monospace,monospace;color:#9ca3af;max-height:160px;overflow:auto}
+.thumbs{display:flex;gap:4px;flex-wrap:wrap;margin-top:6px}.thumbs img{width:56px;height:56px;object-fit:cover;border-radius:6px}
+</style></head><body>
+<h1>📐 Комната → .set</h1>
+
+<section id="cfg"><h2>1. Настройки GitHub</h2>
+<label>Репозиторий для сканов (владелец / имя)</label>
+<div class="row"><input id="owner" placeholder="владелец"><input id="repo" placeholder="репозиторий"></div>
+<label>Токен (fine-grained, только этот репозиторий, Contents: Read and write)</label>
+<input id="token" type="password" placeholder="github_pat_…" autocomplete="off">
+<button id="saveCfg" class="sec">Сохранить на этом телефоне</button>
+<div class="muted">Токен хранится только в браузере этого устройства.</div></section>
+
+<section><h2>2. Новый скан</h2>
+<label>Название комнаты</label><input id="name" placeholder="Гостиная">
+<label>Эталон масштаба</label>
+<input id="ref" value="двустворчатая дверь 1.24 x 2.01 м">
+<label>Фото (15–20 шт., со всех сторон; в кадре должен быть эталон)</label>
+<input id="files" type="file" accept="image/*" multiple>
+<div class="thumbs" id="thumbs"></div>
+<button id="send" disabled>Отправить на анализ</button>
+<div id="sendStatus" class="muted"></div></section>
+
+<section><h2>3. Мои сканы</h2>
+<button id="refresh" class="sec">Обновить список</button><div id="scans"></div></section>
+
+<section><h2>4. Проверка без сети (scene.json → .set)</h2>
+<textarea id="sceneText" rows="3" placeholder="вставьте scene.json"></textarea>
+<button id="buildManual" class="sec">Собрать .set</button><div id="manualOut"></div></section>
+
+<section><h2>Журнал</h2><div id="log"></div></section>
+
+<script src="https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js"></script>
+<script>
+const $=id=>document.getElementById(id), LOG=m=>{$('log').textContent+=m+'\n';$('log').scrollTop=1e9};
+const cfg=()=>({o:$('owner').value.trim(),r:$('repo').value.trim(),t:$('token').value.trim()});
+for(const k of ['owner','repo','token']) $(k).value=localStorage.getItem('rts_'+k)||(k==='owner'?'RenneMikhail':k==='repo'?'room-scans':'');
+$('saveCfg').onclick=()=>{for(const k of ['owner','repo','token'])localStorage.setItem('rts_'+k,$(k).value.trim());LOG('настройки сохранены')};
+
+// ---------- GitHub API ----------
+async function gh(method,path,body,raw){
+  const c=cfg(); if(!c.t) throw new Error('нет токена');
+  const r=await fetch(`https://api.github.com/repos/${c.o}/${c.r}/${path}`,{method,headers:{Authorization:'Bearer '+c.t,Accept:raw?'application/vnd.github.raw+json':'application/vnd.github+json'},body:body?JSON.stringify(body):undefined});
+  if(r.status===404) return null;
+  if(!r.ok) throw new Error(method+' '+path+' → '+r.status+' '+(await r.text()).slice(0,120));
+  return raw?r.text():r.json();
+}
+const put=(path,b64,msg)=>gh('PUT','contents/'+path,{message:msg,content:b64});
+const b64s=s=>btoa(unescape(encodeURIComponent(s)));
+
+// ---------- фото ----------
+let picked=[];
+$('files').onchange=e=>{picked=[...e.target.files];$('send').disabled=!picked.length;$('thumbs').innerHTML='';
+  picked.slice(0,24).forEach(f=>{const i=new Image();i.src=URL.createObjectURL(f);$('thumbs').appendChild(i)});
+  $('sendStatus').textContent=picked.length+' фото выбрано'};
+function shrink(file,max=1600){return new Promise((res,rej)=>{const img=new Image();img.onload=()=>{const k=Math.min(1,max/Math.max(img.width,img.height));
+  const c=document.createElement('canvas');c.width=Math.round(img.width*k);c.height=Math.round(img.height*k);c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+  c.toBlob(b=>{const fr=new FileReader();fr.onload=()=>res(fr.result.split(',')[1]);fr.readAsDataURL(b)},'image/jpeg',.85)};img.onerror=rej;img.src=URL.createObjectURL(file)})}
+$('send').onclick=async()=>{
+  try{$('send').disabled=true;const id=new Date().toISOString().replace(/[-:T]/g,'').slice(0,14)+'-'+($('name').value.trim()||'room').replace(/[^\wа-яА-Я-]+/g,'_');
+    for(let i=0;i<picked.length;i++){$('sendStatus').textContent=`загрузка ${i+1}/${picked.length}…`;
+      await put(`scans/${id}/photos/${String(i+1).padStart(2,'0')}.jpg`,await shrink(picked[i]),`scan ${id}: photo ${i+1}`)}
+    await put(`scans/${id}/meta.json`,b64s(JSON.stringify({id,name:$('name').value.trim(),ref:$('ref').value.trim(),count:picked.length,created:new Date().toISOString()},null,1)),`scan ${id}: meta`);
+    $('sendStatus').innerHTML='<span class="ok">Отправлено ✔</span> Скажите ассистенту: «забери скан '+id+'»';LOG('отправлен скан '+id);refreshScans();
+  }catch(e){$('sendStatus').innerHTML='<span class="err">'+e.message+'</span>';LOG(e.message)}finally{$('send').disabled=false}};
+
+// ---------- Pyodide: .set из scene.json ----------
+let pyReady=null;
+function initPy(){return pyReady||(pyReady=(async()=>{LOG('загрузка Python…');const py=await loadPyodide({indexURL:'https://cdn.jsdelivr.net/pyodide/v0.26.4/full/'});
+  for(const f of ['set_codec.py','set_checksum.py','scene2set.py','catalog.json']) py.FS.writeFile('/home/pyodide/'+f,await (await fetch('py/'+f)).text());
+  py.FS.writeFile('/home/pyodide/template.set',new Uint8Array(await (await fetch('template.set')).arrayBuffer()));LOG('Python готов');return py})())}
+async function buildSet(scene){const py=await initPy();py.globals.set('scene_json',JSON.stringify(scene));
+  py.runPython(`import sys,json
+sys.path.insert(0,'/home/pyodide')
+import scene2set
+data,w=scene2set.build_bytes(json.loads(scene_json),open('/home/pyodide/template.set','rb').read())
+open('/home/pyodide/out.set','wb').write(data)
+warnings=json.dumps(w)`);
+  return {data:py.FS.readFile('/home/pyodide/out.set'),warnings:JSON.parse(py.globals.get('warnings'))}}
+function offer(el,name,res){const blob=new Blob([res.data],{type:'application/octet-stream'}),url=URL.createObjectURL(blob);
+  el.innerHTML=`<a href="${url}" download="${name}"><button>⬇ Скачать ${name}</button></a><button class="sec" id="sh">Поделиться (AirDrop / Файлы)</button>`+
+   (res.warnings.length?'<div class="warn">'+res.warnings.join('<br>')+'</div>':'');
+  el.querySelector('#sh').onclick=()=>navigator.share?navigator.share({files:[new File([blob],name,{type:'application/octet-stream'})]}).catch(e=>LOG(e.message)):LOG('Поделиться не поддерживается — используйте «Скачать»')}
+$('buildManual').onclick=async()=>{try{const r=await buildSet(JSON.parse($('sceneText').value));offer($('manualOut'),'room.set',r);LOG('собрано '+r.data.length+' байт')}catch(e){$('manualOut').innerHTML='<span class="err">'+e.message+'</span>'}};
+
+// ---------- план сверху ----------
+function drawPlan(cv,s){const L=s.room.size_ew,W=s.room.size_ns,pad=24,sc=(cv.parentElement.clientWidth-2*pad)/Math.max(L,W*1.0);
+  cv.width=Math.round(L*sc+2*pad);cv.height=Math.round(W*sc+2*pad);const g=cv.getContext('2d');const P=(x,d)=>[pad+x*sc,pad+d*sc];
+  g.fillStyle='#16233a';g.fillRect(pad,pad,L*sc,W*sc);g.strokeStyle='#e5e7eb';g.lineWidth=3;g.strokeRect(pad,pad,L*sc,W*sc);
+  g.fillStyle='#9ca3af';g.font='11px sans-serif';g.fillText('С',cv.width/2,14);
+  for(const p of s.portals||[]){g.strokeStyle=p.kind==='door'?'#fbbf24':'#60a5fa';g.lineWidth=6;g.beginPath();let a,b;
+    if(p.wall==='north'){a=P(p.center-p.width/2,0);b=P(p.center+p.width/2,0)}else if(p.wall==='south'){a=P(p.center-p.width/2,W);b=P(p.center+p.width/2,W)}
+    else if(p.wall==='west'){a=P(0,p.center-p.width/2);b=P(0,p.center+p.width/2)}else{a=P(L,p.center-p.width/2);b=P(L,p.center+p.width/2)}
+    g.moveTo(...a);g.lineTo(...b);g.stroke()}
+  for(const o of s.objects||[]){const w=(o.width||0.6)*sc,d=(o.depth||0.6)*sc,[cx,cy]=P(o.x,o.d),f=(o.facing_deg||0)*Math.PI/180;
+    g.save();g.translate(cx,cy);g.rotate(f);g.fillStyle='rgba(147,197,253,.35)';g.strokeStyle='#93c5fd';g.lineWidth=1.5;g.fillRect(-w/2,-d/2,w,d);g.strokeRect(-w/2,-d/2,w,d);
+    g.strokeStyle='#fbbf24';g.beginPath();g.moveTo(0,0);g.lineTo(0,-d/2);g.stroke();g.restore();
+    g.fillStyle='#e5e7eb';g.font='10px sans-serif';g.textAlign='center';g.fillText(o.category,cx,cy+3)}
+  g.textAlign='left'}
+
+// ---------- список сканов ----------
+async function refreshScans(){const box=$('scans');box.textContent='…';
+  try{const dirs=await gh('GET','contents/scans');if(!dirs){box.innerHTML='<div class="muted">Сканов пока нет</div>';return}
+    box.innerHTML='';for(const d of dirs.filter(x=>x.type==='dir').reverse()){const div=document.createElement('div');div.className='scan';box.appendChild(div);
+      const files=await gh('GET','contents/'+d.path)||[];const hasScene=files.some(f=>f.name==='scene.json');
+      div.innerHTML=`<b>${d.name}</b> <span class="${hasScene?'ok':'warn'}">${hasScene?'готово':'ждёт анализа'}</span><div class="out"></div>`;
+      if(hasScene){const out=div.querySelector('.out');const b=document.createElement('button');b.textContent='Показать план и собрать .set';out.appendChild(b);
+        b.onclick=async()=>{try{b.disabled=true;const s=JSON.parse(await gh('GET','contents/'+d.path+'/scene.json',null,true));
+          const cv=document.createElement('canvas');out.appendChild(cv);drawPlan(cv,s);
+          const as=(s.assumptions||[]);if(as.length){const n=document.createElement('div');n.className='muted';n.textContent='Допущения: '+as.join('; ');out.appendChild(n)}
+          const r=await buildSet(s);const dl=document.createElement('div');out.appendChild(dl);offer(dl,d.name.replace(/[^\wа-яА-Я-]+/g,'_')+'.set',r);b.remove()}catch(e){LOG(e.message)}}}}
+  }catch(e){box.innerHTML='<span class="err">'+e.message+'</span>'}}
+$('refresh').onclick=refreshScans;
+if('serviceWorker' in navigator){/* без кэша: приложение всегда свежее */}
+</script></body></html>
